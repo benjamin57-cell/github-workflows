@@ -1,0 +1,54 @@
+name: Detect Changes
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: 'JSON array of directory names to detect, e.g. ["backend","frontend","sync-transaction"]'
+        type: string
+        required: true
+    outputs:
+      changes:
+        description: "JSON array of changed directory names"
+        value: ${{ jobs.detect.outputs.changes }}
+      has-changes:
+        description: "Whether any target directory changed"
+        value: ${{ jobs.detect.outputs.has-changes }}
+
+jobs:
+  detect:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.detect.outputs.changes }}
+      has-changes: ${{ steps.detect.outputs.has-changes }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build filter config
+        id: filters
+        env:
+          PATHS: ${{ inputs.paths }}
+        run: |
+          FILTER=$(echo "${PATHS}" | jq -r '.[] | "\(.): \n  - '\''\(.)/**'\''"' | sed 's/\\n/\n/g')
+          {
+            echo "filters<<EOF"
+            echo "${FILTER}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: ${{ steps.filters.outputs.filters }}
+
+      - name: Collect changes
+        id: detect
+        env:
+          PATHS: ${{ inputs.paths }}
+          FILTER_OUTPUT: ${{ toJSON(steps.filter.outputs) }}
+        run: |
+          CHANGES=$(echo "${PATHS}" | jq -c --argjson out "${FILTER_OUTPUT}" \
+            '[.[] | select(. as $p | $out[$p] == "true")]')
+          echo "changes=${CHANGES}" >> "$GITHUB_OUTPUT"
+          [[ "${CHANGES}" != "[]" ]] && echo "has-changes=true" >> "$GITHUB_OUTPUT" || echo "has-changes=false" >> "$GITHUB_OUTPUT"
