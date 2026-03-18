@@ -1,137 +1,104 @@
 # Reusable Workflows
 
-This repository contains a collection of reusable workflows for GitHub Actions. The workflows are written in YAML and can be used in your own workflows by referencing the raw file on the default branch.
+Reusable GitHub Actions workflows. Reference them from any repository via `uses:`.
 
-# Usage
+## Workflows
 
-Here is the sample usage of this reusable workflows
+### Build and Push Docker Image
 
-## The CI workflow
+[`.github/workflows/build-push-image.yml`](.github/workflows/build-push-image.yml) — Builds a Docker image and pushes it to Amazon ECR.
+
+**Inputs**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `image-name` | **yes** | — | Docker image name, e.g. `account-service` |
+| `image-tag` | no | `github.ref_name` | Image tag |
+| `push` | no | `true` | Push image to registry |
+| `context` | no | `.` | Docker build context path |
+| `dockerfile` | no | `Dockerfile` | Dockerfile path relative to context |
+| `branch-or-tag` | no | `github.ref_name` | Git ref to checkout |
+| `platforms` | no | `linux/amd64` | Target platforms (e.g. `linux/amd64,linux/arm64`) |
+| `build-args` | no | `""` | Newline-separated build args |
+| `cache` | no | `true` | Enable Docker layer cache via registry |
+| `cache-mode` | no | `min` | Cache mode: `min` or `max` |
+| `runner` | no | `ubuntu-latest` | GitHub Actions runner label |
+| `aws-region` | no | `ap-southeast-1` | AWS region for ECR |
+
+**Secrets**
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `aws-access-key-id` | **yes** | AWS access key ID |
+| `aws-secret-access-key` | **yes** | AWS secret access key |
+| `build-secrets` | no | Newline-separated secret build args (e.g. `GH_TOKEN=xxx`) |
+
+**Outputs**
+
+| Output | Description |
+|--------|-------------|
+| `image-uri` | Full image URI with tag |
+| `image-digest` | Image digest (sha256) |
+
+## Usage
+
+### Minimal
 
 ```yaml
-name: Continuous Integration
+name: Build
 on:
   push:
-    branches:
-      - main
-      - staging
-      - develop
+    branches: [main, staging, develop]
+
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      image-name: my-service
+    secrets:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+```
+
+### Multi-platform with build secrets
+
+```yaml
+name: Build
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      image-name: my-service
+      platforms: linux/amd64,linux/arm64
+      cache-mode: max
+      build-args: |
+        NODE_ENV=production
+        API_URL=https://api.example.com
+    secrets:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      build-secrets: |
+        GH_TOKEN=${{ secrets.GH_TOKEN }}
+```
+
+### Build only (no push, e.g. PR validation)
+
+```yaml
+name: PR Check
+on:
   pull_request:
 
 jobs:
-  install-deps:
-    uses: Salary-Hero/github-workflows/.github/workflows/ci.yaml@main
-    with:
-      node-version: 18
-
-  lint:
-    needs: install-deps
-    uses: Salary-Hero/github-workflows/.github/workflows/ci.yaml@main
-    with:
-      target: lint
-      node-version: 18
-
-  test:
-    needs: install-deps
-    uses: Salary-Hero/github-workflows/.github/workflows/ci.yaml@main
-    with:
-      target: test
-      node-version: 18
-
   build:
-    needs: install-deps
-    uses: Salary-Hero/github-workflows/.github/workflows/ci.yaml@main
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
     with:
-      target: build
-      node-version: 18
-```
-
-The workflow above will run the following steps:
-
-1. Install dependencies (and save them to the GitHub Cache)
-
-And the following steps in parallel:
-
-- Restore dependencies cache and lint the code
-- Restore dependencies cache and run the tests
-- Restore dependencies cache and build the code
-
-## The Deploy workflow
-
-```yaml
-name: Publish Docker image and deploy to EKS
-on:
-  push:
-    branches:
-      - main
-      - staging
-      - develop
-
-jobs:
-  deploy:
-    uses: Salary-Hero/github-workflows/.github/workflows/deploy.yaml@main
-    with:
-      service-name: my-service # Just change this
-      environment: ${{ github.ref_name }}
-      prefix-image-tag: salary-hero
-      kustomize-repository: Salary-Hero/infra
-      kustomize-path: kustomize
-      kustomize-branch: main
-      eks-cluster: nonprod
-      update-mode: open_pull_request
+      image-name: my-service
+      push: false
     secrets:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      GH_TOKEN: ${{ secrets.GH_TOKEN }} # This token should have an read/write access to the Salary-Hero/infra repository
-```
-
-If you have multiple EKS clusters which you needs to add conditional logic to your workflow, you can use the following example:
-
-```yaml
-name: Publish Docker image and deploy to EKS
-on:
-  push:
-    branches:
-      - main
-      - staging
-      - develop
-
-jobs:
-  prepare-env:
-    runs-on: ubuntu-latest
-    outputs:
-      cluster: ${{ steps.set-cluster.outputs.cluster }}
-      update-mode: ${{ steps.set-cluster.outputs.update-mode }}
-    steps:
-      - name: Set cluster
-        id: set-cluster
-        run: |
-          if [[ ${{ github.ref_name  }} == "main" ]]; then
-            echo "cluster=prod" >> $GITHUB_OUTPUT
-            echo "update-mode=open_pull_request" >> $GITHUB_OUTPUT
-          elif [[ ${{ github.ref_name  }} == "staging" ]]; then
-            echo "cluster=nonprod" >> $GITHUB_OUTPUT
-            echo "update-mode=commit" >> $GITHUB_OUTPUT
-          elif [[ ${{ github.ref_name  }} == "develop" ]]; then
-            echo "cluster=nonprod" >> $GITHUB_OUTPUT
-            echo "update-mode=commit" >> $GITHUB_OUTPUT
-          fi
-  deploy:
-    needs: prepare-env
-    uses: Salary-Hero/github-workflows/.github/workflows/deploy.yaml@main
-    with:
-      service-name: my-service # Just change this
-      environment: ${{ github.ref_name }}
-      prefix-image-tag: salary-hero
-      kustomize-repository: Salary-Hero/infra
-      kustomize-path: kustomize
-      kustomize-branch: main
-      eks-cluster: ${{ needs.prepare-env.outputs.cluster }}
-      update-mode: ${{ needs.prepare-env.outputs.update-mode }}
-    secrets:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      GH_TOKEN: ${{ secrets.GH_TOKEN }} # This token should have an read/write access to the Salary-Hero/infra repository
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 ```
