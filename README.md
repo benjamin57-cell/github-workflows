@@ -2,54 +2,66 @@
 
 Reusable GitHub Actions workflows. Reference them from any repository via `uses:`.
 
-## Workflows
+## Build and Push Docker Image
 
-### Build and Push Docker Image
+[`.github/workflows/build-push-image.yml`](.github/workflows/build-push-image.yml) — Builds a Docker image and pushes to any container registry.
 
-[`.github/workflows/build-push-image.yml`](.github/workflows/build-push-image.yml) — Builds a Docker image and pushes it to Amazon ECR.
+Supported registries: **Amazon ECR**, **Google Artifact Registry**, **GitHub Container Registry**, **Docker Hub**, and any **custom** registry.
 
-**Inputs**
+### Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `image-name` | **yes** | — | Docker image name, e.g. `account-service` |
+| `registry` | no | `ecr` | Registry type: `ecr` \| `gar` \| `ghcr` \| `dockerhub` \| `custom` |
+| `registry-url` | for gar/custom | `""` | Registry hostname (e.g. `asia-southeast1-docker.pkg.dev`) |
+| `image-name` | **yes** | — | Image path within registry (see examples below) |
 | `image-tag` | no | `github.ref_name` | Image tag |
 | `push` | no | `true` | Push image to registry |
 | `context` | no | `.` | Docker build context path |
-| `dockerfile` | no | `Dockerfile` | Dockerfile path relative to context |
+| `dockerfile` | no | `Dockerfile` | Dockerfile path |
 | `branch-or-tag` | no | `github.ref_name` | Git ref to checkout |
-| `platforms` | no | `linux/amd64` | Target platforms (e.g. `linux/amd64,linux/arm64`) |
+| `platforms` | no | `linux/amd64` | Target platforms |
 | `build-args` | no | `""` | Newline-separated build args |
 | `cache` | no | `true` | Enable Docker layer cache via registry |
 | `cache-mode` | no | `min` | Cache mode: `min` or `max` |
 | `runner` | no | `ubuntu-latest` | GitHub Actions runner label |
-| `aws-region` | no | `ap-southeast-1` | AWS region for ECR |
+| `aws-region` | no | `ap-southeast-1` | AWS region (ECR only) |
 
-**Secrets**
+### Secrets (pass only what your registry needs)
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `aws-access-key-id` | **yes** | AWS access key ID |
-| `aws-secret-access-key` | **yes** | AWS secret access key |
-| `build-secrets` | no | Newline-separated secret build args (e.g. `GH_TOKEN=xxx`) |
+| Secret | Registries | Description |
+|--------|-----------|-------------|
+| `aws-access-key-id` | ECR | AWS access key ID |
+| `aws-secret-access-key` | ECR | AWS secret access key |
+| `gcp-credentials` | GAR | GCP service account JSON key |
+| `registry-username` | GHCR, DockerHub, Custom | Registry username |
+| `registry-password` | GHCR, DockerHub, Custom | Registry password or token |
+| `build-secrets` | all | Newline-separated secret build args |
 
-**Outputs**
+### Outputs
 
 | Output | Description |
 |--------|-------------|
-| `image-uri` | Full image URI with tag |
+| `image-uri` | Full image URI with tag (e.g. `ghcr.io/org/app:v1.0`) |
 | `image-digest` | Image digest (sha256) |
 
-## Usage
+### Image naming by registry
 
-### Minimal
+| Registry | `registry-url` | `image-name` | Resulting image |
+|----------|---------------|--------------|-----------------|
+| ECR | *(auto)* | `my-service` | `123456.dkr.ecr.region.amazonaws.com/my-service:tag` |
+| GAR | `asia-southeast1-docker.pkg.dev` | `project/repo/image` | `asia-southeast1-docker.pkg.dev/project/repo/image:tag` |
+| GHCR | *(auto)* | `org/image` | `ghcr.io/org/image:tag` |
+| DockerHub | *(auto)* | `user/image` | `docker.io/user/image:tag` |
+| Custom | `registry.example.com` | `team/image` | `registry.example.com/team/image:tag` |
+
+---
+
+## Usage Examples
+
+### Amazon ECR (default)
 
 ```yaml
-name: Build
-on:
-  push:
-    branches: [main, staging, develop]
-
 jobs:
   build:
     uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
@@ -60,14 +72,67 @@ jobs:
       aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 ```
 
+### Google Artifact Registry
+
+```yaml
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      registry: gar
+      registry-url: asia-southeast1-docker.pkg.dev
+      image-name: my-project/my-repo/my-service
+      image-tag: ${{ github.ref_name }}-${{ github.sha }}
+    secrets:
+      gcp-credentials: ${{ secrets.GCP_CREDENTIALS }}
+```
+
+### GitHub Container Registry
+
+```yaml
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      registry: ghcr
+      image-name: ${{ github.repository }}
+    secrets:
+      registry-username: ${{ github.actor }}
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Docker Hub
+
+```yaml
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      registry: dockerhub
+      image-name: myuser/my-service
+    secrets:
+      registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
+```
+
+### Custom / Private Registry
+
+```yaml
+jobs:
+  build:
+    uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
+    with:
+      registry: custom
+      registry-url: harbor.internal.company.com
+      image-name: team/my-service
+    secrets:
+      registry-username: ${{ secrets.REGISTRY_USER }}
+      registry-password: ${{ secrets.REGISTRY_PASS }}
+```
+
 ### Multi-platform with build secrets
 
 ```yaml
-name: Build
-on:
-  push:
-    branches: [main]
-
 jobs:
   build:
     uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main
@@ -77,7 +142,6 @@ jobs:
       cache-mode: max
       build-args: |
         NODE_ENV=production
-        API_URL=https://api.example.com
     secrets:
       aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
       aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -85,13 +149,9 @@ jobs:
         GH_TOKEN=${{ secrets.GH_TOKEN }}
 ```
 
-### Build only (no push, e.g. PR validation)
+### Build only (PR validation, no push)
 
 ```yaml
-name: PR Check
-on:
-  pull_request:
-
 jobs:
   build:
     uses: <org>/github-workflows/.github/workflows/build-push-image.yml@main

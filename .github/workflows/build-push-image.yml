@@ -3,8 +3,20 @@ name: Build and Push Docker Image
 on:
   workflow_call:
     inputs:
+      # ── Registry ──
+      registry:
+        description: "Registry type: ecr | gar | ghcr | dockerhub | custom"
+        type: string
+        required: false
+        default: ecr
+      registry-url:
+        description: "Registry hostname (required for gar & custom, e.g. asia-southeast1-docker.pkg.dev)"
+        type: string
+        required: false
+        default: ""
+      # ── Image ──
       image-name:
-        description: "Docker image name, e.g. account-service"
+        description: "Image path within registry (ECR: repo-name, GAR: project/repo/name, GHCR: org/name)"
         type: string
         required: true
       image-tag:
@@ -12,6 +24,7 @@ on:
         type: string
         required: false
         default: ${{ github.ref_name }}
+      # ── Build ──
       push:
         description: "Push image to registry"
         type: boolean
@@ -38,10 +51,11 @@ on:
         required: false
         default: linux/amd64
       build-args:
-        description: "Newline-separated build args, e.g. ARG1=val1"
+        description: "Newline-separated build args"
         type: string
         required: false
         default: ""
+      # ── Cache ──
       cache:
         description: "Enable Docker layer cache via registry"
         type: boolean
@@ -52,25 +66,40 @@ on:
         type: string
         required: false
         default: min
+      # ── Runner ──
       runner:
         description: "GitHub Actions runner label"
         type: string
         required: false
         default: ubuntu-latest
+      # ── ECR-specific ──
       aws-region:
-        description: "AWS region for ECR"
+        description: "AWS region (ECR only)"
         type: string
         required: false
         default: ap-southeast-1
     secrets:
+      # ECR
       aws-access-key-id:
-        description: "AWS access key ID"
-        required: true
+        description: "AWS access key ID (ECR)"
+        required: false
       aws-secret-access-key:
-        description: "AWS secret access key"
-        required: true
+        description: "AWS secret access key (ECR)"
+        required: false
+      # GAR
+      gcp-credentials:
+        description: "GCP service account JSON key (GAR)"
+        required: false
+      # GHCR / DockerHub / Custom
+      registry-username:
+        description: "Registry username (GHCR/DockerHub/Custom)"
+        required: false
+      registry-password:
+        description: "Registry password or token (GHCR/DockerHub/Custom)"
+        required: false
+      # Build
       build-secrets:
-        description: "Newline-separated secret build args, e.g. GH_TOKEN=xxx"
+        description: "Newline-separated secret build args"
         required: false
     outputs:
       image-uri:
@@ -93,7 +122,9 @@ jobs:
         with:
           ref: ${{ inputs.branch-or-tag }}
 
+      # ── Login: Amazon ECR ──
       - name: Configure AWS Credentials
+        if: inputs.registry == 'ecr'
         uses: aws-actions/configure-aws-credentials@v5
         with:
           aws-access-key-id: ${{ secrets.aws-access-key-id }}
@@ -101,17 +132,47 @@ jobs:
           aws-region: ${{ inputs.aws-region }}
 
       - name: Login to Amazon ECR
+        if: inputs.registry == 'ecr'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ── Login: Google Artifact Registry ──
+      - name: Login to Google Artifact Registry
+        if: inputs.registry == 'gar'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry-url }}
+          username: _json_key
+          password: ${{ secrets.gcp-credentials }}
+
+      # ── Login: GHCR / DockerHub / Custom ──
+      - name: Login to container registry
+        if: inputs.registry == 'ghcr' || inputs.registry == 'dockerhub' || inputs.registry == 'custom'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry == 'ghcr' && 'ghcr.io' || inputs.registry == 'dockerhub' && 'docker.io' || inputs.registry-url }}
+          username: ${{ secrets.registry-username }}
+          password: ${{ secrets.registry-password }}
+
+      # ── Metadata ──
       - name: Prepare metadata
         id: meta
+        env:
+          REGISTRY_TYPE: ${{ inputs.registry }}
+          REGISTRY_URL: ${{ inputs.registry-url }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
         run: |
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ inputs.image-name }}"
-          TAG="${{ inputs.image-tag }}"
-          echo "image-uri=${IMAGE}:${TAG}" >> "$GITHUB_OUTPUT"
+          case "${REGISTRY_TYPE}" in
+            ecr)        IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}" ;;
+            gar|custom)  IMAGE="${REGISTRY_URL}/${IMAGE_NAME}" ;;
+            ghcr)       IMAGE="ghcr.io/${IMAGE_NAME}" ;;
+            dockerhub)  IMAGE="docker.io/${IMAGE_NAME}" ;;
+            *)          echo "::error::Unknown registry type: ${REGISTRY_TYPE}"; exit 1 ;;
+          esac
+          echo "image-uri=${IMAGE}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta (labels)
         id: dockermeta
@@ -126,6 +187,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ── Build & Push ──
       - name: Build and Push
         id: build
         uses: docker/build-push-action@v6
@@ -136,8 +198,8 @@ jobs:
           push: ${{ inputs.push }}
           tags: ${{ steps.meta.outputs.image-uri }}
           labels: ${{ steps.dockermeta.outputs.labels }}
-          cache-from: ${{ inputs.cache && format('type=registry,ref={0}:dockercache', steps.meta.outputs.image) || '' }}
-          cache-to: ${{ inputs.cache && format('type=registry,ref={0}:dockercache,mode={1},image-manifest=true', steps.meta.outputs.image, inputs.cache-mode) || '' }}
+          cache-from: ${{ inputs.cache && format('type=registry,ref={0}:buildcache', steps.meta.outputs.image) || '' }}
+          cache-to: ${{ inputs.cache && format('type=registry,ref={0}:buildcache,mode={1},image-manifest=true', steps.meta.outputs.image, inputs.cache-mode) || '' }}
           build-args: ${{ inputs.build-args }}
           secrets: ${{ secrets.build-secrets }}
           provenance: false
