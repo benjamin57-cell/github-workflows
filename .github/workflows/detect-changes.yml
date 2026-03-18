@@ -23,7 +23,7 @@ jobs:
       changes: ${{ steps.detect.outputs.changes }}
       has-changes: ${{ steps.detect.outputs.has-changes }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build filter config
         id: filters
@@ -37,7 +37,7 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: ${{ steps.filters.outputs.filters }}
