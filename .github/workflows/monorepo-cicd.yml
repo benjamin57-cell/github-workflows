@@ -188,7 +188,7 @@ jobs:
             ecr)        IMAGE="${ECR_REGISTRY}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
             gar|custom) IMAGE="${REGISTRY_URL}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
             ghcr)       IMAGE="ghcr.io/${GITHUB_OWNER}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
-            dockerhub)  IMAGE="docker.io/${REGISTRY_USERNAME}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
+            dockerhub)  IMAGE="docker.io/${REGISTRY_USERNAME}/${IMAGE_NAME}" ;;
             *)          echo "::error::Unknown registry type: ${REGISTRY_TYPE}"; exit 1 ;;
           esac
 
