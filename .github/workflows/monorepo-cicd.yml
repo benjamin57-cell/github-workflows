@@ -175,12 +175,14 @@ jobs:
           REGISTRY_URL: ${{ inputs.registry-url }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           NAMESPACE: ${{ inputs.registry-namespace }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           IMAGE_TAG: ${{ inputs.image-tag }}
           GITHUB_OWNER: ${{ github.repository_owner }}
+          GIT_REF: ${{ github.ref_name }}
         run: |
           IMAGE_NAME="${REPO_NAME}-${SERVICE}"
-          NS="${NAMESPACE:-${GITHUB_OWNER}}"
-          TAG="${IMAGE_TAG:-${{ github.ref_name }}-${GITHUB_SHA:0:8}}"
+          NS="${NAMESPACE:-${REGISTRY_USERNAME:-${GITHUB_OWNER}}}"
+          TAG="${IMAGE_TAG:-${GIT_REF}-${GITHUB_SHA:0:8}}"
 
           case "${REGISTRY_TYPE}" in
             ecr)        IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}" ;;
