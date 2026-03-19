@@ -165,9 +165,9 @@ jobs:
 
 ---
 
-## Monorepo Build
+## Monorepo CICD
 
-[`.github/workflows/monorepo-build.yml`](.github/workflows/monorepo-build.yml) — Detects changes in a monorepo and builds only the affected services. Image name is auto-derived: `{repo-name}-{service}`.
+[`.github/workflows/monorepo-cicd.yml`](.github/workflows/monorepo-cicd.yml) — Detects changes in a monorepo and builds only the affected services. Image name is auto-derived: `{repo-name}-{service}`.
 
 ### Inputs
 
@@ -203,7 +203,7 @@ For example, in a repo named `clawfriend` with services `["backend","frontend"]`
 ```yaml
 jobs:
   build:
-    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["backend","frontend","sync-transaction"]'
     secrets:
@@ -216,7 +216,7 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["backend","frontend"]'
       registry: ghcr
@@ -229,7 +229,7 @@ jobs:
 ```yaml
 jobs:
   build:
-    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["api","worker"]'
       registry-namespace: my-dockerhub-user
