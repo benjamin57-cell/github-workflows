@@ -7,42 +7,94 @@ on:
         description: 'JSON array of service directory names, e.g. ["backend","frontend"]'
         type: string
         required: true
+      # ── Registry ──
       registry:
-        description: "Registry type: dockerhub | ghcr"
+        description: "Registry type: ecr | gar | ghcr | dockerhub | custom"
         type: string
         required: false
         default: dockerhub
+      registry-url:
+        description: "Registry hostname (required for gar & custom, e.g. asia-southeast1-docker.pkg.dev)"
+        type: string
+        required: false
+        default: ""
       registry-namespace:
         description: "Image namespace/owner (default: github.repository_owner)"
         type: string
         required: false
         default: ""
+      # ── Image ──
       image-tag:
         description: "Image tag (default: {branch}-{short-sha})"
         type: string
         required: false
         default: ""
+      # ── Build ──
+      push:
+        description: "Push image to registry"
+        type: boolean
+        required: false
+        default: true
+      branch-or-tag:
+        description: "Git ref to checkout"
+        type: string
+        required: false
+        default: ${{ github.ref_name }}
       platforms:
         description: "Target platforms, e.g. linux/amd64,linux/arm64"
         type: string
         required: false
         default: linux/amd64
+      build-args:
+        description: "Newline-separated build args"
+        type: string
+        required: false
+        default: ""
+      # ── Cache ──
       cache:
         description: "Enable Docker layer cache via registry"
         type: boolean
         required: false
         default: true
+      cache-mode:
+        description: "Cache mode: min (fast, smaller) or max (all layers)"
+        type: string
+        required: false
+        default: min
+      # ── Runner ──
       runner:
         description: "GitHub Actions runner label"
         type: string
         required: false
         default: ubuntu-latest
+      # ── ECR-specific ──
+      aws-region:
+        description: "AWS region (ECR only)"
+        type: string
+        required: false
+        default: ap-southeast-1
     secrets:
+      # ECR
+      aws-access-key-id:
+        description: "AWS access key ID (ECR)"
+        required: false
+      aws-secret-access-key:
+        description: "AWS secret access key (ECR)"
+        required: false
+      # GAR
+      gcp-credentials:
+        description: "GCP service account JSON key (GAR)"
+        required: false
+      # GHCR / DockerHub / Custom
       registry-username:
-        description: "Registry username (DockerHub/Custom)"
+        description: "Registry username (GHCR/DockerHub/Custom)"
         required: false
       registry-password:
-        description: "Registry password or token"
+        description: "Registry password or token (GHCR/DockerHub/Custom)"
+        required: false
+      # Build
+      build-secrets:
+        description: "Newline-separated secret build args"
         required: false
 
 jobs:
@@ -101,23 +153,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch-or-tag }}
 
-      # ── Login: DockerHub ──
-      - name: Login to Docker Hub
-        if: inputs.registry == 'dockerhub'
+      # ── Login: Amazon ECR ──
+      - name: Configure AWS Credentials
+        if: inputs.registry == 'ecr'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Login to Amazon ECR
+        if: inputs.registry == 'ecr'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── Login: Google Artifact Registry ──
+      - name: Login to Google Artifact Registry
+        if: inputs.registry == 'gar'
         uses: docker/login-action@v4
         with:
-          registry: docker.io
+          registry: ${{ inputs.registry-url }}
+          username: _json_key
+          password: ${{ secrets.gcp-credentials }}
+
+      # ── Login: GHCR / DockerHub / Custom ──
+      - name: Login to container registry
+        if: inputs.registry == 'ghcr' || inputs.registry == 'dockerhub' || inputs.registry == 'custom'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ inputs.registry == 'ghcr' && 'ghcr.io' || inputs.registry == 'dockerhub' && 'docker.io' || inputs.registry-url }}
           username: ${{ secrets.registry-username }}
-          password: ${{ secrets.registry-password }}
-
-      # ── Login: GHCR ──
-      - name: Login to GHCR
-        if: inputs.registry == 'ghcr'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
           password: ${{ secrets.registry-password }}
 
       # ── Metadata ──
@@ -126,7 +194,9 @@ jobs:
         env:
           REPO_NAME: ${{ github.event.repository.name }}
           SERVICE: ${{ matrix.service }}
-          REGISTRY: ${{ inputs.registry }}
+          REGISTRY_TYPE: ${{ inputs.registry }}
+          REGISTRY_URL: ${{ inputs.registry-url }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           NAMESPACE: ${{ inputs.registry-namespace }}
           IMAGE_TAG: ${{ inputs.image-tag }}
           GITHUB_OWNER: ${{ github.repository_owner }}
@@ -135,14 +205,23 @@ jobs:
           NS="${NAMESPACE:-${GITHUB_OWNER}}"
           TAG="${IMAGE_TAG:-${{ github.ref_name }}-${GITHUB_SHA:0:8}}"
 
-          case "${REGISTRY}" in
-            dockerhub) IMAGE="docker.io/${NS}/${IMAGE_NAME}" ;;
-            ghcr)      IMAGE="ghcr.io/${NS}/${IMAGE_NAME}" ;;
-            *)         echo "::error::Unsupported registry: ${REGISTRY}"; exit 1 ;;
+          case "${REGISTRY_TYPE}" in
+            ecr)        IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}" ;;
+            gar|custom) IMAGE="${REGISTRY_URL}/${NS}/${IMAGE_NAME}" ;;
+            ghcr)       IMAGE="ghcr.io/${NS}/${IMAGE_NAME}" ;;
+            dockerhub)  IMAGE="docker.io/${NS}/${IMAGE_NAME}" ;;
+            *)          echo "::error::Unknown registry type: ${REGISTRY_TYPE}"; exit 1 ;;
           esac
 
-          echo "image=${IMAGE}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "image-uri=${IMAGE}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "cache-ref=${IMAGE}:buildcache" >> "$GITHUB_OUTPUT"
+
+      - name: Docker meta (labels)
+        id: dockermeta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.meta.outputs.image }}
 
       # ── Buildx / QEMU ──
       - name: Set up QEMU
@@ -154,13 +233,19 @@ jobs:
 
       # ── Build & Push ──
       - name: Build and Push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.service }}
           file: ${{ matrix.service }}/Dockerfile
           platforms: ${{ inputs.platforms }}
-          push: true
-          tags: ${{ steps.meta.outputs.image }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.image-uri }}
+          labels: ${{ steps.dockermeta.outputs.labels }}
+          build-args: ${{ inputs.build-args }}
+          secrets: ${{ secrets.build-secrets }}
           provenance: false
           cache-from: ${{ inputs.cache && format('type=registry,ref={0}', steps.meta.outputs.cache-ref) || '' }}
-          cache-to: ${{ inputs.cache && format('type=registry,ref={0},mode=max', steps.meta.outputs.cache-ref) || '' }}
+          cache-to: ${{ inputs.cache && format('type=registry,ref={0},mode={1}', steps.meta.outputs.cache-ref, inputs.cache-mode) || '' }}
+
+# TODO: Add optional step to update GitOps repo with new image tag (similar to push-gitops.yml)
