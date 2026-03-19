@@ -165,33 +165,48 @@ jobs:
 
 ---
 
-## Monorepo CICD
+## Monorepo CI/CD
 
 [`.github/workflows/monorepo-cicd.yml`](.github/workflows/monorepo-cicd.yml) — Detects changes in a monorepo and builds only the affected services. Image name is auto-derived: `{repo-name}-{service}`.
+
+Supported registries: **Amazon ECR**, **Google Artifact Registry**, **GitHub Container Registry**, **Docker Hub**, and any **custom** registry.
+
+Uses `secrets: inherit` — no need to declare secrets in the caller. The workflow picks secrets by convention.
 
 ### Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `services` | **yes** | — | JSON array of service directory names |
-| `registry` | no | `dockerhub` | Registry type: `dockerhub` \| `ghcr` |
+| `registry` | no | `dockerhub` | Registry type: `ecr` \| `gar` \| `ghcr` \| `dockerhub` \| `custom` |
+| `registry-url` | for gar/custom | `""` | Registry hostname (e.g. `asia-southeast1-docker.pkg.dev`) |
 | `registry-namespace` | no | `github.repository_owner` | Image namespace/owner |
 | `image-tag` | no | `{branch}-{short-sha}` | Image tag |
+| `push` | no | `true` | Push image to registry |
+| `branch-or-tag` | no | `github.ref_name` | Git ref to checkout |
 | `platforms` | no | `linux/amd64` | Target platforms |
+| `build-args` | no | `""` | Newline-separated build args |
 | `cache` | no | `true` | Enable Docker layer cache via registry |
+| `cache-mode` | no | `min` | Cache mode: `min` or `max` |
 | `runner` | no | `ubuntu-latest` | GitHub Actions runner label |
+| `aws-region` | no | `ap-southeast-1` | AWS region (ECR only) |
 
-### Secrets
+### Secrets (via `secrets: inherit`)
 
-| Secret | Registries | Description |
-|--------|-----------|-------------|
-| `registry-username` | DockerHub | Registry username |
-| `registry-password` | DockerHub, GHCR | Registry password or token |
+No explicit secret mapping needed in caller — just use `secrets: inherit`. The workflow reads secrets by well-known names:
+
+| Registry | Required secrets in caller repo |
+|----------|---------------------------------|
+| ECR | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+| GAR | `GCP_CREDENTIALS` |
+| DockerHub / Custom | `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` |
+| GHCR | `GITHUB_TOKEN` *(automatic)* |
+| *(optional)* | `BUILD_SECRETS` — newline-separated secret build args |
 
 ### How it works
 
 1. Detects which service directories have changes (via `dorny/paths-filter`)
-2. Runs a matrix build for each changed service
+2. Runs a matrix build **in parallel** for each changed service
 3. Image name follows the convention: `{namespace}/{repo-name}-{service}:{tag}`
 
 For example, in a repo named `clawfriend` with services `["backend","frontend"]`:
@@ -202,39 +217,59 @@ For example, in a repo named `clawfriend` with services `["backend","frontend"]`
 
 ```yaml
 jobs:
-  build:
+  cicd:
     uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["backend","frontend","sync-transaction"]'
-    secrets:
-      registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
-      registry-password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    secrets: inherit
 ```
 
 ### Usage — GHCR
 
 ```yaml
 jobs:
-  build:
+  cicd:
     uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["backend","frontend"]'
       registry: ghcr
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
+    secrets: inherit
+```
+
+### Usage — Amazon ECR
+
+```yaml
+jobs:
+  cicd:
+    uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
+    with:
+      services: '["api","worker"]'
+      registry: ecr
+    secrets: inherit
+```
+
+### Usage — Google Artifact Registry
+
+```yaml
+jobs:
+  cicd:
+    uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
+    with:
+      services: '["api","worker"]'
+      registry: gar
+      registry-url: asia-southeast1-docker.pkg.dev
+    secrets: inherit
 ```
 
 ### Usage — Custom tag & namespace
 
 ```yaml
 jobs:
-  build:
+  cicd:
     uses: <user>/github-workflows/.github/workflows/monorepo-cicd.yml@main
     with:
       services: '["api","worker"]'
       registry-namespace: my-dockerhub-user
       image-tag: v1.2.3
-    secrets:
-      registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
-      registry-password: ${{ secrets.DOCKERHUB_PASSWORD }}
+    secrets: inherit
 ```
