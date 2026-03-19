@@ -18,12 +18,12 @@ on:
         type: string
         required: false
         default: ""
-      registry-namespace:
-        description: "Image namespace/owner (default: github.repository_owner)"
+      # ── Image ──
+      registry-prefix:
+        description: "Optional path prefix between namespace and image name (e.g. 'whales-market' → .../whales-market/repo-service)"
         type: string
         required: false
         default: ""
-      # ── Image ──
       image-tag:
         description: "Image tag (default: {branch}-{short-sha})"
         type: string
@@ -174,21 +174,21 @@ jobs:
           REGISTRY_TYPE: ${{ inputs.registry }}
           REGISTRY_URL: ${{ inputs.registry-url }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          NAMESPACE: ${{ inputs.registry-namespace }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          PREFIX: ${{ inputs.registry-prefix }}
           IMAGE_TAG: ${{ inputs.image-tag }}
           GITHUB_OWNER: ${{ github.repository_owner }}
           GIT_REF: ${{ github.ref_name }}
         run: |
           IMAGE_NAME="${REPO_NAME}-${SERVICE}"
-          NS="${NAMESPACE:-${REGISTRY_USERNAME:-${GITHUB_OWNER}}}"
           TAG="${IMAGE_TAG:-${GIT_REF}-${GITHUB_SHA:0:8}}"
+          [[ -n "${PREFIX}" ]] && PATH_PREFIX="${PREFIX}/" || PATH_PREFIX=""
 
           case "${REGISTRY_TYPE}" in
-            ecr)        IMAGE="${ECR_REGISTRY}/${IMAGE_NAME}" ;;
-            gar|custom) IMAGE="${REGISTRY_URL}/${NS}/${IMAGE_NAME}" ;;
-            ghcr)       IMAGE="ghcr.io/${NS}/${IMAGE_NAME}" ;;
-            dockerhub)  IMAGE="docker.io/${NS}/${IMAGE_NAME}" ;;
+            ecr)        IMAGE="${ECR_REGISTRY}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
+            gar|custom) IMAGE="${REGISTRY_URL}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
+            ghcr)       IMAGE="ghcr.io/${GITHUB_OWNER}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
+            dockerhub)  IMAGE="docker.io/${REGISTRY_USERNAME}/${PATH_PREFIX}${REPO_NAME}/${IMAGE_NAME}" ;;
             *)          echo "::error::Unknown registry type: ${REGISTRY_TYPE}"; exit 1 ;;
           esac
 
