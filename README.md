@@ -162,3 +162,79 @@ jobs:
       aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
       aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 ```
+
+---
+
+## Monorepo Build
+
+[`.github/workflows/monorepo-build.yml`](.github/workflows/monorepo-build.yml) — Detects changes in a monorepo and builds only the affected services. Image name is auto-derived: `{repo-name}-{service}`.
+
+### Inputs
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `services` | **yes** | — | JSON array of service directory names |
+| `registry` | no | `dockerhub` | Registry type: `dockerhub` \| `ghcr` |
+| `registry-namespace` | no | `github.repository_owner` | Image namespace/owner |
+| `image-tag` | no | `{branch}-{short-sha}` | Image tag |
+| `platforms` | no | `linux/amd64` | Target platforms |
+| `cache` | no | `true` | Enable Docker layer cache via registry |
+| `runner` | no | `ubuntu-latest` | GitHub Actions runner label |
+
+### Secrets
+
+| Secret | Registries | Description |
+|--------|-----------|-------------|
+| `registry-username` | DockerHub | Registry username |
+| `registry-password` | DockerHub, GHCR | Registry password or token |
+
+### How it works
+
+1. Detects which service directories have changes (via `dorny/paths-filter`)
+2. Runs a matrix build for each changed service
+3. Image name follows the convention: `{namespace}/{repo-name}-{service}:{tag}`
+
+For example, in a repo named `clawfriend` with services `["backend","frontend"]`:
+- `docker.io/myuser/clawfriend-backend:main-a1b2c3d4`
+- `docker.io/myuser/clawfriend-frontend:main-a1b2c3d4`
+
+### Usage — DockerHub (minimal)
+
+```yaml
+jobs:
+  build:
+    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    with:
+      services: '["backend","frontend","sync-transaction"]'
+    secrets:
+      registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      registry-password: ${{ secrets.DOCKERHUB_PASSWORD }}
+```
+
+### Usage — GHCR
+
+```yaml
+jobs:
+  build:
+    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    with:
+      services: '["backend","frontend"]'
+      registry: ghcr
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Usage — Custom tag & namespace
+
+```yaml
+jobs:
+  build:
+    uses: <user>/github-workflows/.github/workflows/monorepo-build.yml@main
+    with:
+      services: '["api","worker"]'
+      registry-namespace: my-dockerhub-user
+      image-tag: v1.2.3
+    secrets:
+      registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      registry-password: ${{ secrets.DOCKERHUB_PASSWORD }}
+```
